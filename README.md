@@ -1,20 +1,113 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# 🛒 ShopSphere
 
-# Run and deploy your AI Studio app
+A modern, secure, and full-stack e-commerce web application designed to provide a smooth shopping experience for customers and powerful management tools for administrators.
 
-This contains everything you need to run your app locally.
+ShopSphere provides product browsing, authentication, shopping cart management, checkout, order management, role-based access control, and secure authentication features.
 
-View your app in AI Studio: https://ai.studio/apps/b10b0c16-f47e-4d58-ab2b-3a281aadcbbf
+---
 
-## Run Locally
+## ✨ Features
 
-**Prerequisites:**  Node.js
+### 👤 User Features
 
+- User registration and login
+- Secure authentication
+- Google Sign-In support
+- Phone number authentication with OTP
+- Browse products and categories
+- Search and explore products
+- Add products to cart
+- Update product quantities
+- Remove products from cart
+- Checkout and order placement
+- View order details
+- Manage user profile
+- Secure logout
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 🛡️ Admin Features
+
+- Secure administrator authentication
+- Admin-specific login protection
+- Role-based access control
+- Product management
+- Add, edit, and delete products
+- Category management
+- User management
+- Order management
+- View application statistics
+- Manage customer accounts
+- Monitor orders and products
+
+### 🔐 Security
+
+- JWT-based authentication
+- Password hashing with bcrypt
+- Role-based authorization
+- OTP-based authentication
+- Admin two-factor authentication
+- Protected API routes
+- Environment-based secret management
+- Secure authentication flow
+
+---
+
+## 🛠️ Tech Stack
+
+### Frontend
+
+- React.js
+- Vite
+- JavaScript / TypeScript
+- HTML5
+- CSS3
+- Responsive UI
+
+### Backend
+
+- Node.js
+- Express.js
+- RESTful APIs
+
+### Database
+
+- MongoDB
+- MongoDB Atlas
+
+### Authentication & Security
+
+- JWT
+- bcrypt
+- OTP Authentication
+- Two-Factor Authentication
+- Google Authentication
+
+### Development & Deployment
+
+- Git
+- GitHub
+- Vercel
+- Render
+
+---
+
+## 📂 Project Structure
+
+```text
+ShopSphere/
+│
+├── client/                  # Frontend application
+│
+├── server/                  # Backend application
+│   ├── routes/
+│   ├── controllers/
+│   ├── models/
+│   ├── middleware/
+│   └── services/
+│
+├── public/                  # Static assets
+│
+├── .env                     # Environment variables
+├── .gitignore
+├── package.json
+├── vite.config.ts
+└── README.md
