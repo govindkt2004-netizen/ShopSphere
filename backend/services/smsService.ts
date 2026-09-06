@@ -1,0 +1,428 @@
+import crypto from 'crypto';
+
+// Detect if a key is a 2Factor.in UUID key format (e.g. be62d1ca-a0f6-11f1-9cb1-0200cd936042)
+const isTwoFactorKey = (key?: string): boolean => {
+  if (!key) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key.trim());
+};
+
+// Configuration check for real SMS provider
+export const isSmsConfigured = (): boolean => {
+  // 1. 2Factor.in (UUID API key in FAST2SMS_API_KEY, SMS_API_KEY, or TWOFACTOR_API_KEY)
+  const rawKey = process.env.TWOFACTOR_API_KEY || process.env.FAST2SMS_API_KEY || process.env.SMS_API_KEY;
+  if (rawKey && (process.env.TWOFACTOR_API_KEY || isTwoFactorKey(rawKey))) {
+    return true;
+  }
+
+  // 2. Fast2SMS (Alpha-numeric standard key)
+  if (process.env.FAST2SMS_API_KEY && !isTwoFactorKey(process.env.FAST2SMS_API_KEY)) {
+    return true;
+  }
+  if (process.env.SMS_API_KEY && !isTwoFactorKey(process.env.SMS_API_KEY)) {
+    return true;
+  }
+
+  // 3. Twilio (Requires SID, Auth Token, AND outbound sender)
+  const hasTwilioSender = Boolean(
+    process.env.TWILIO_PHONE_NUMBER ||
+    process.env.TWILIO_MESSAGING_SERVICE_SID ||
+    process.env.TWILIO_VERIFY_SERVICE_SID ||
+    process.env.TWILIO_SERVICE_SID
+  );
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && hasTwilioSender) {
+    return true;
+  }
+
+  // 4. Custom Webhook / SMS Gateway
+  if (process.env.SMS_GATEWAY_URL || process.env.SMS_WEBHOOK_URL) {
+    return true;
+  }
+
+  return false;
+};
+
+// Identify active provider
+export const getActiveProvider = (): { name: string; configured: boolean; details?: string } => {
+  const rawKey = process.env.TWOFACTOR_API_KEY || process.env.FAST2SMS_API_KEY || process.env.SMS_API_KEY;
+  if (rawKey && (process.env.TWOFACTOR_API_KEY || isTwoFactorKey(rawKey))) {
+    return { name: '2Factor.in', configured: true, details: 'Active via 2Factor.in Gateway' };
+  }
+
+  const hasTwilioSender = Boolean(
+    process.env.TWILIO_PHONE_NUMBER ||
+    process.env.TWILIO_MESSAGING_SERVICE_SID ||
+    process.env.TWILIO_VERIFY_SERVICE_SID ||
+    process.env.TWILIO_SERVICE_SID
+  );
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && hasTwilioSender) {
+    return { name: 'Twilio', configured: true, details: 'Twilio Cloud SMS' };
+  }
+
+  if (process.env.FAST2SMS_API_KEY || process.env.SMS_API_KEY) {
+    return { name: 'Fast2SMS', configured: true, details: 'Fast2SMS Gateway' };
+  }
+
+  if (process.env.SMS_GATEWAY_URL || process.env.SMS_WEBHOOK_URL) {
+    return { name: 'Webhook Gateway', configured: true, details: 'Custom HTTP Webhook' };
+  }
+
+  return { name: 'None', configured: false, details: 'SMS service is not configured' };
+};
+
+// Mask phone number for user-facing security messages: e.g. +91******1234
+export const maskPhoneNumber = (phoneStr?: string): string => {
+  if (!phoneStr) return '+91******0000';
+  const digits = phoneStr.replace(/\D/g, '');
+  if (digits.length < 4) return '+91******0000';
+
+  const last4 = digits.slice(-4);
+  const countryCode = digits.length > 10 ? `+${digits.slice(0, digits.length - 10)}` : '+91';
+  return `${countryCode}******${last4}`;
+};
+
+// Format phone number to E.164
+export const formatE164Phone = (phoneStr: string): string => {
+  const cleanPhone = phoneStr.trim();
+  const digits = cleanPhone.replace(/\D/g, '');
+  if (cleanPhone.startsWith('+')) return cleanPhone;
+  if (digits.length === 10) return `+91${digits}`;
+  return `+${digits}`;
+};
+
+// Dispatch real SMS to recipient's mobile number
+export const sendSms = async (
+  toPhone: string,
+  message: string,
+  otpCode?: string
+): Promise<{ success: boolean; provider?: string; sessionId?: string; error?: string }> => {
+  const cleanPhone = toPhone.trim();
+  const digits = cleanPhone.replace(/\D/g, '');
+  const formattedTo = formatE164Phone(cleanPhone);
+  const indian10Digits = digits.slice(-10);
+
+  if (!isSmsConfigured()) {
+    return {
+      success: false,
+      error: 'SMS service is not configured. Please add SMS credentials in Settings or sign in with Email & Password or Google.'
+    };
+  }
+
+  const providerErrors: string[] = [];
+
+  // =========================================================================
+  // 1. 2Factor.in Gateway (Dedicated high-speed OTP delivery for Indian numbers)
+  // =========================================================================
+  const rawKey = process.env.TWOFACTOR_API_KEY || process.env.FAST2SMS_API_KEY || process.env.SMS_API_KEY;
+  const isTwoFactor = Boolean(rawKey && (process.env.TWOFACTOR_API_KEY || isTwoFactorKey(rawKey)));
+
+  if (isTwoFactor && rawKey && indian10Digits.length === 10) {
+    try {
+      const apiKey = rawKey.trim();
+      let url = '';
+
+      if (otpCode) {
+        // Direct custom OTP route: https://2factor.in/API/V1/{api_key}/SMS/{phone}/{otp_code}
+        url = `https://2factor.in/API/V1/${apiKey}/SMS/${indian10Digits}/${otpCode}`;
+      } else {
+        // Autogenerated OTP route: https://2factor.in/API/V1/{api_key}/SMS/${indian10Digits}/AUTOGEN
+        url = `https://2factor.in/API/V1/${apiKey}/SMS/${indian10Digits}/AUTOGEN`;
+      }
+
+      console.log(`[SMSService] Attempting 2Factor.in OTP dispatch to ${maskPhoneNumber(toPhone)}...`);
+      const res = await fetch(url);
+      const data: any = await res.json().catch(() => ({}));
+
+      if (res.ok && data.Status === 'Success') {
+        console.log(`[SMSService] SMS successfully delivered via 2Factor.in to ${maskPhoneNumber(toPhone)} (Session: ${data.Details})`);
+        return {
+          success: true,
+          provider: '2Factor.in',
+          sessionId: data.Details
+        };
+      } else {
+        const errDetail = data.Details || data.Status || `HTTP ${res.status}`;
+        console.log(`[SMSService] 2Factor.in response error: ${errDetail}`);
+        providerErrors.push(`2Factor.in: ${errDetail}`);
+      }
+    } catch (err: any) {
+      console.log(`[SMSService] 2Factor.in exception: ${err.message}`);
+      providerErrors.push(`2Factor.in: ${err.message}`);
+    }
+  }
+
+  // =========================================================================
+  // 2. Twilio Gateway (Verify API or Messages API)
+  // =========================================================================
+  const hasTwilioSender = Boolean(
+    process.env.TWILIO_PHONE_NUMBER ||
+    process.env.TWILIO_MESSAGING_SERVICE_SID ||
+    process.env.TWILIO_VERIFY_SERVICE_SID ||
+    process.env.TWILIO_SERVICE_SID
+  );
+
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && hasTwilioSender) {
+    try {
+      const accountSid = process.env.TWILIO_ACCOUNT_SID;
+      const authToken = process.env.TWILIO_AUTH_TOKEN;
+      const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+      const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+      const verifyServiceSid =
+        process.env.TWILIO_VERIFY_SERVICE_SID ||
+        process.env.TWILIO_SERVICE_SID ||
+        (messagingServiceSid?.startsWith('VA') ? messagingServiceSid : undefined);
+      const contentSid = process.env.TWILIO_CONTENT_SID;
+
+      const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
+
+      // 2A. Twilio Verify API v2 (Dedicated for OTP)
+      if (verifyServiceSid && verifyServiceSid.startsWith('VA')) {
+        try {
+          const verifyUrl = `https://verify.twilio.com/v2/Services/${verifyServiceSid}/Verifications`;
+          const verifyParams = new URLSearchParams();
+          verifyParams.append('To', formattedTo);
+          verifyParams.append('Channel', 'sms');
+          if (otpCode) {
+            verifyParams.append('CustomCode', otpCode);
+          }
+
+          const verifyRes = await fetch(verifyUrl, {
+            method: 'POST',
+            headers: {
+              Authorization: authHeader,
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: verifyParams.toString()
+          });
+
+          if (verifyRes.ok) {
+            console.log(`[SMSService] SMS OTP dispatched via Twilio Verify to ${maskPhoneNumber(toPhone)}`);
+            return { success: true, provider: 'Twilio' };
+          } else {
+            const vErr = await verifyRes.json().catch(() => ({}));
+            console.log('[SMSService] Twilio Verify notice:', vErr.message || verifyRes.statusText);
+            providerErrors.push(`Twilio Verify: ${vErr.message || verifyRes.statusText}`);
+          }
+        } catch (vEx: any) {
+          console.log('[SMSService] Twilio Verify exception:', vEx.message);
+          providerErrors.push(`Twilio Verify: ${vEx.message}`);
+        }
+      }
+
+      // 2B. Twilio Messages API
+      const messagesUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+
+      const trySendMessage = async (mode: 'direct-phone' | 'messaging-service' | 'content-template') => {
+        const params = new URLSearchParams();
+        params.append('To', formattedTo);
+
+        if (mode === 'content-template' && contentSid) {
+          params.append('ContentSid', contentSid);
+          if (otpCode) {
+            params.append('ContentVariables', JSON.stringify({ '1': otpCode }));
+          }
+          if (messagingServiceSid && !messagingServiceSid.startsWith('VA')) {
+            params.append('MessagingServiceSid', messagingServiceSid);
+          } else if (fromNumber) {
+            params.append('From', fromNumber);
+          }
+        } else if (mode === 'direct-phone' && fromNumber) {
+          params.append('From', fromNumber);
+          params.append('Body', message);
+        } else if (mode === 'messaging-service' && messagingServiceSid && !messagingServiceSid.startsWith('VA')) {
+          params.append('MessagingServiceSid', messagingServiceSid);
+          params.append('Body', message);
+        } else if (fromNumber) {
+          params.append('From', fromNumber);
+          params.append('Body', message);
+        } else {
+          return null;
+        }
+
+        return await fetch(messagesUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: authHeader,
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: params.toString()
+        });
+      };
+
+      let res: Response | null = null;
+      if (contentSid) {
+        res = await trySendMessage('content-template');
+      }
+      if (!res || !res.ok) {
+        if (fromNumber) {
+          res = await trySendMessage('direct-phone');
+        }
+      }
+      if (!res || !res.ok) {
+        if (messagingServiceSid && !messagingServiceSid.startsWith('VA')) {
+          res = await trySendMessage('messaging-service');
+        }
+      }
+
+      if (res && res.ok) {
+        console.log(`[SMSService] SMS successfully dispatched via Twilio to ${maskPhoneNumber(toPhone)}`);
+        return { success: true, provider: 'Twilio' };
+      }
+
+      const errData = res ? await res.json().catch(() => ({})) : {};
+      let errorMsg = errData.message || 'Twilio delivery failed';
+
+      if (
+        errorMsg.includes('Trial accounts can only use predefined') ||
+        errorMsg.includes('template') ||
+        errData.code === 21614 ||
+        errData.code === 63016
+      ) {
+        errorMsg =
+          'Twilio Trial Account: Custom SMS requires registered phone number in Verified Caller IDs.';
+      } else if (errorMsg.includes('unverified') || errData.code === 21608) {
+        errorMsg =
+          'Twilio Trial Account: Destination number is unverified in your Twilio Console.';
+      }
+
+      console.log(`[SMSService] Twilio API notice: ${errorMsg}`);
+      providerErrors.push(`Twilio: ${errorMsg}`);
+    } catch (err: any) {
+      console.log(`[SMSService] Twilio exception: ${err.message}`);
+      providerErrors.push(`Twilio: ${err.message}`);
+    }
+  }
+
+  // =========================================================================
+  // 3. Fast2SMS Integration (if standard non-UUID key is provided)
+  // =========================================================================
+  const fastKey = process.env.FAST2SMS_API_KEY || process.env.SMS_API_KEY;
+  if (fastKey && !isTwoFactorKey(fastKey) && indian10Digits.length === 10) {
+    try {
+      let res: Response;
+      if (otpCode) {
+        res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+          method: 'POST',
+          headers: {
+            authorization: fastKey.trim(),
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            route: 'otp',
+            variables_values: otpCode,
+            numbers: indian10Digits
+          })
+        });
+      } else {
+        res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+          method: 'POST',
+          headers: {
+            authorization: fastKey.trim(),
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            route: 'v3',
+            sender_id: 'TXTIND',
+            message,
+            language: 'english',
+            flash: 0,
+            numbers: indian10Digits
+          })
+        });
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (data.return === true || res.ok) {
+        console.log(`[SMSService] SMS successfully dispatched via Fast2SMS to ${maskPhoneNumber(toPhone)}`);
+        return { success: true, provider: 'Fast2SMS' };
+      } else {
+        const errorDetail = Array.isArray(data?.message)
+          ? data.message.join(', ')
+          : data?.message || 'Fast2SMS dispatch failed';
+        console.log(`[SMSService] Fast2SMS notice: ${errorDetail}`);
+        providerErrors.push(`Fast2SMS: ${errorDetail}`);
+      }
+    } catch (err: any) {
+      console.log(`[SMSService] Fast2SMS exception: ${err.message}`);
+      providerErrors.push(`Fast2SMS: ${err.message}`);
+    }
+  }
+
+  // =========================================================================
+  // 4. Generic SMS Gateway / Webhook
+  // =========================================================================
+  if (process.env.SMS_GATEWAY_URL || process.env.SMS_WEBHOOK_URL) {
+    try {
+      const gatewayUrl = (process.env.SMS_GATEWAY_URL || process.env.SMS_WEBHOOK_URL)!;
+      const res = await fetch(gatewayUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(process.env.SMS_GATEWAY_AUTH ? { Authorization: process.env.SMS_GATEWAY_AUTH } : {})
+        },
+        body: JSON.stringify({
+          phone: cleanPhone,
+          message,
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      if (res.ok) {
+        console.log(`[SMSService] SMS dispatched via custom gateway to ${maskPhoneNumber(toPhone)}`);
+        return { success: true, provider: 'Webhook Gateway' };
+      } else {
+        providerErrors.push('Custom Gateway responded with error');
+      }
+    } catch (err: any) {
+      console.log(`[SMSService] Custom gateway exception: ${err.message}`);
+      providerErrors.push(`Custom Gateway: ${err.message}`);
+    }
+  }
+
+  const finalError =
+    providerErrors.length > 0
+      ? providerErrors.join(' | ')
+      : 'No active SMS provider configured with verified sender.';
+
+  return { success: false, error: finalError };
+};
+
+// Send OTP SMS with standard template
+export const sendOtpSms = async (
+  toPhone: string,
+  otpCode: string,
+  expiresInMinutes = 5
+): Promise<{
+  success: boolean;
+  configured: boolean;
+  provider?: string;
+  sessionId?: string;
+  error?: string;
+}> => {
+  if (!isSmsConfigured()) {
+    return {
+      success: false,
+      configured: false,
+      error: 'SMS service is not configured'
+    };
+  }
+
+  // Standard pre-approved OTP message template
+  const message = `Your verification code is: ${otpCode}`;
+  const result = await sendSms(toPhone, message, otpCode);
+
+  return {
+    success: result.success,
+    configured: true,
+    provider: result.provider,
+    sessionId: result.sessionId,
+    error: result.error
+  };
+};
+
+export const smsService = {
+  isConfigured: isSmsConfigured,
+  getActiveProvider,
+  sendSms,
+  sendOtpSms,
+  maskPhoneNumber
+};

@@ -1,0 +1,6 @@
+{
+  "name": "ShopSphere – Modern E-Commerce Platform",
+  "description": "A professional full-stack E-Commerce platform featuring customer shopping, cart, checkout, live order tracking, automated email notification service (order confirmation, shipment tracking, security alerts), and a comprehensive admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

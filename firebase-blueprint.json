@@ -1,0 +1,91 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered customer or administrator profile in ShopSphere",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the user",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Full display name of the user",
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "description": "Primary email address of the user",
+          "maxLength": 150
+        },
+        "phone": {
+          "type": "string",
+          "description": "Phone number for SMS alerts and delivery",
+          "maxLength": 30
+        },
+        "role": {
+          "type": "string",
+          "description": "Role clearance (customer or admin)",
+          "enum": ["customer", "admin"]
+        },
+        "authProvider": {
+          "type": "string",
+          "description": "Provider used to authenticate (local or google)",
+          "enum": ["local", "google"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of account creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["id", "name", "email", "role"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "E-Commerce customer purchase order",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique order identifier",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "ID of customer who placed the order",
+          "maxLength": 128
+        },
+        "totalAmount": {
+          "type": "number",
+          "description": "Total purchase amount in INR"
+        },
+        "status": {
+          "type": "string",
+          "description": "Fulfillment status of order",
+          "enum": ["pending", "processing", "shipped", "delivered", "cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp when order was placed"
+        }
+      },
+      "required": ["id", "userId", "totalAmount", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles in ShopSphere"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of orders placed by customers"
+    }
+  }
+}
